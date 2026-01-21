@@ -10,6 +10,18 @@ A lightweight Windows utility for triggering media functions via customizable ho
 - Customizable modifier key combinations (Ctrl, Shift, Alt, WinKey)
 - Support for keyboard keys, mouse buttons, and mouse wheel
 
+## Why?
+
+My favorite keyboard doesn't have convenient media keys or a volume knob. I have to hit function key combinations and/or reach across my desk to the speaker knob. Holding the Windows Key and scrolling the mousewheel to adjust the volume is very convenient!
+
+For years I've used an [AutoHotkey](https://www.autohotkey.com/) script to do exactly what this program does, and it's been perfect. I highly recommend that program if you can use it. However, lately I've been running into a problem with certain online games that think that if you have AHK running, you must be cheating. So you have to remember to turn off your AHK scripts before launching the game, then turn them back on again later. Not a huge deal, but why wouldn't I spend a whole bunch of hours coding and debugging to save myself a few seconds and a very minor annoyance?
+
+## Notes
+
+I did not know what I was doing with hooking into the input system when I started writing this. Specifically I couldn't figure out how to suppress the Windows Key key-up event (popping up the Start Menu) without leaving Windows thinking you were always holding the Windows Key down. Eventually I read about a hack to replace it with a left Control Key key-up event. It seems to work, but doesn't feel great to me. Please let me know if you encounter problems.
+
+Also new for me with this project is using Unicode strings in Win32. I normally just configure everything to basic ASCII C-strings, but I wanted to experiment. Shout if this breaks and I can switch them out. If it doesn't break, maybe I'll experiment with adding translations. We'll see.
+
 ## Building
 
 ```bash
@@ -95,4 +107,4 @@ xxd -i assets/icon.ico > src/icon_data.h
 
 ## License
 
-[MIT License](https://mit-license.org/)
+[MIT License](./LICENSE)
