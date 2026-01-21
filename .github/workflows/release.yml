@@ -33,10 +33,10 @@ jobs:
         run: zig build -Doptimize=ReleaseSmall
 
       - name: Install NSIS
-        run: choco install nsis -y
+        uses: negrutiu/nsis-install@v2
 
       - name: Build installer
-        run: C:\ProgramData\chocolatey\lib\nsis\tools\makensis.exe installer.nsi
+        run: makensis installer.nsi
 
       - name: Create portable zip
         shell: bash
