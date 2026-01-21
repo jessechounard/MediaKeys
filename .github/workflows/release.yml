@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate version matches tag
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          FILE_VERSION=$(grep -oP '#define VERSION "\K[^"]+' src/version.h)
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "Version mismatch: tag is v$TAG_VERSION but version.h has $FILE_VERSION"
+            exit 1
+          fi
+          echo "Version validated: $TAG_VERSION"
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.0
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseSmall
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Build installer
+        run: makensis installer.nsi
+
+      - name: Create portable zip
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          zip "MediaKeys-${VERSION}-Portable.zip" zig-out/bin/MediaKeys.exe assets/config.json
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            MediaKeys-*-Setup.exe
+            MediaKeys-*-Portable.zip
+          generate_release_notes: true

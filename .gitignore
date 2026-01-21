@@ -4,8 +4,8 @@ zig-out/
 /debug/
 /build/
 /build-*/
-/docgen_tmp/
 .DS_Store
 zig-cache/
 .vscode
-imgui.ini
+MediaKeys-*-Setup.exe
+MediaKeys-*-Portable.zip

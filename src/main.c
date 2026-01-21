@@ -16,6 +16,7 @@
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TRAY_ICON 1
 #define ID_TRAY_EXIT 1001
+#define ID_TRAY_STARTUP 1002
 #define MAX_BINDINGS 64
 
 typedef enum {
@@ -92,6 +93,10 @@ static ModifierState ParseModifierState(const char *str);
 static BOOL ParseTrigger(const char *str, TriggerType *type, HotkeyBinding *binding);
 static MediaAction ParseAction(const char *str);
 static HICON LoadIconFromMemory(const unsigned char *data, unsigned int size);
+static BOOL GetStartupShortcutPath(WCHAR *path, DWORD pathLen);
+static BOOL IsStartupEnabled(void);
+static BOOL EnableStartup(void);
+static BOOL DisableStartup(void);
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
     MSG msg;
@@ -128,6 +133,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 
     trayMenu = CreatePopupMenu();
     if (trayMenu) {
+        UINT startupFlags = MF_STRING | (IsStartupEnabled() ? MF_CHECKED : MF_UNCHECKED);
+        AppendMenuW(trayMenu, startupFlags, ID_TRAY_STARTUP, L"Run at startup");
+        AppendMenuW(trayMenu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(trayMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
     }
 
@@ -612,6 +620,68 @@ static HICON LoadIconFromMemory(const unsigned char *data, unsigned int size) {
         (PBYTE)(data + offset), imageSize, TRUE, 0x00030000, 32, 32, LR_DEFAULTCOLOR);
 }
 
+static BOOL GetStartupShortcutPath(WCHAR *path, DWORD pathLen) {
+    WCHAR startupPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_STARTUP, NULL, 0, startupPath)))
+        return FALSE;
+
+    swprintf_s(path, pathLen, L"%s\\%s.lnk", startupPath, APP_NAME);
+    return TRUE;
+}
+
+static BOOL IsStartupEnabled(void) {
+    WCHAR shortcutPath[MAX_PATH];
+    if (!GetStartupShortcutPath(shortcutPath, MAX_PATH))
+        return FALSE;
+
+    return GetFileAttributesW(shortcutPath) != INVALID_FILE_ATTRIBUTES;
+}
+
+static BOOL EnableStartup(void) {
+    WCHAR shortcutPath[MAX_PATH];
+    if (!GetStartupShortcutPath(shortcutPath, MAX_PATH))
+        return FALSE;
+
+    WCHAR exePath[MAX_PATH];
+    if (!GetModuleFileNameW(NULL, exePath, MAX_PATH))
+        return FALSE;
+
+    CoInitialize(NULL);
+
+    IShellLinkW *shellLink = NULL;
+    HRESULT hr = CoCreateInstance(
+        &CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&shellLink);
+
+    if (FAILED(hr)) {
+        CoUninitialize();
+        return FALSE;
+    }
+
+    shellLink->lpVtbl->SetPath(shellLink, exePath);
+    shellLink->lpVtbl->SetDescription(shellLink, APP_NAME);
+
+    IPersistFile *persistFile = NULL;
+    hr = shellLink->lpVtbl->QueryInterface(shellLink, &IID_IPersistFile, (void **)&persistFile);
+
+    if (SUCCEEDED(hr)) {
+        hr = persistFile->lpVtbl->Save(persistFile, shortcutPath, TRUE);
+        persistFile->lpVtbl->Release(persistFile);
+    }
+
+    shellLink->lpVtbl->Release(shellLink);
+    CoUninitialize();
+
+    return SUCCEEDED(hr);
+}
+
+static BOOL DisableStartup(void) {
+    WCHAR shortcutPath[MAX_PATH];
+    if (!GetStartupShortcutPath(shortcutPath, MAX_PATH))
+        return FALSE;
+
+    return DeleteFileW(shortcutPath);
+}
+
 static BOOL RegisterWindowClass(HINSTANCE hInstance) {
     WNDCLASSEXW wc = {0};
 
@@ -662,6 +732,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     switch (msg) {
     case WM_TRAYICON:
         switch (LOWORD(lParam)) {
+        case WM_LBUTTONUP:
         case WM_RBUTTONUP:
         case WM_CONTEXTMENU:
             ShowTrayMenu(hwnd);
@@ -671,6 +742,15 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case ID_TRAY_STARTUP:
+            if (IsStartupEnabled()) {
+                DisableStartup();
+                CheckMenuItem(trayMenu, ID_TRAY_STARTUP, MF_UNCHECKED);
+            } else {
+                EnableStartup();
+                CheckMenuItem(trayMenu, ID_TRAY_STARTUP, MF_CHECKED);
+            }
+            return 0;
         case ID_TRAY_EXIT:
             PostQuitMessage(0);
             return 0;

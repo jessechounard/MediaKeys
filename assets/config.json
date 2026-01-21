@@ -1,0 +1,9 @@
+{
+  "bindings": [
+    { "win": "left", "trigger": "wheel_up", "action": "volume_up" },
+    { "win": "left", "trigger": "wheel_down", "action": "volume_down" },
+    { "win": "left", "trigger": "mouse_x2", "action": "next_track" },
+    { "win": "left", "trigger": "mouse_x1", "action": "prev_track" },
+    { "win": "left", "trigger": "mouse_middle", "action": "play_pause" }
+  ]
+}
