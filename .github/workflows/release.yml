@@ -36,7 +36,7 @@ jobs:
         run: choco install nsis -y
 
       - name: Build installer
-        run: makensis installer.nsi
+        run: C:\ProgramData\chocolatey\lib\nsis\tools\makensis.exe installer.nsi
 
       - name: Create portable zip
         shell: bash
