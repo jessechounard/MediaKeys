@@ -17,7 +17,7 @@ jobs:
         shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          FILE_VERSION=$(grep -oP '#define VERSION "\K[^"]+' src/version.h)
+          FILE_VERSION=$(sed -n 's/#define VERSION "\(.*\)"/\1/p' src/version.h)
           if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
             echo "Version mismatch: tag is v$TAG_VERSION but version.h has $FILE_VERSION"
             exit 1
