@@ -39,10 +39,10 @@ jobs:
         run: makensis installer.nsi
 
       - name: Create portable zip
-        shell: bash
+        shell: pwsh
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          zip "MediaKeys-${VERSION}-Portable.zip" zig-out/bin/MediaKeys.exe assets/config.json
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          Compress-Archive -Path "zig-out/bin/MediaKeys.exe", "assets/config.json" -DestinationPath "MediaKeys-${version}-Portable.zip"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
