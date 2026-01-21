@@ -22,11 +22,30 @@ I did not know what I was doing with hooking into the input system when I starte
 
 Also new for me with this project is using Unicode strings in Win32. I normally just configure everything to basic ASCII C-strings, but I wanted to experiment. Shout if this breaks and I can switch them out. If it doesn't break, maybe I'll experiment with adding translations. We'll see.
 
+## Installing
+
+You have a few options.
+- You can build from the source code (see below)
+- Use a setup installer from the [latest releases](https://github.com/jessechounard/MediaKeys/releases/latest)
+- Grab a portable build from the [latest releases](https://github.com/jessechounard/MediaKeys/releases/latest) - Just unzip and run. To uninstall, make sure the program isn't running (see System Tray below) and delete the file.
+
+When the app starts, it'll look like nothing happened. Check the system tray for the icon. I should probably add a popup the first time you run it to let you know that the app runs invisibly.
+
+If you grab one of the prebuilt binaries, you're likely to see a Windows Defender warning that it's an unrecognized app. This is because it's an unsigned app, for now. I'm looking into options there. You can click "More info" then "Run anyway" to get past that if you're willing to ignore the warning.
+
 ## Building
 
 ```bash
 zig build -Doptimize=ReleaseSmall
 ```
+
+## System Tray
+
+The app runs without a window. The only controls are through the configuration file and the system tray. Currently there are two system tray options when you click on the icon. (A music note.) 
+- Run at startup (Toggle on and off.)
+- Exit
+
+I want to add a user interface to configure the keys in here, but it's not there yet.
 
 ## Configuration
 
@@ -84,16 +103,12 @@ Modifier keys: `ctrl`, `shift`, `alt`, `win`
 | `prev_track` | Previous track |
 | `next_track` | Next track |
 
-## Usage
-
-Run `MediaKeys.exe`. The application will appear in the system tray. Right-click the tray icon and select "Exit" to close.
-
 ## Attribution
 
 cJSON library - Ultralightweight JSON parser in ANSI C  
 Downloaded from [cJSON github](https://github.com/DaveGamble/cJSON).
 
-Original [music note image](music_17877340.png) by meaicon, downloaded from [freepik.com](https://www.freepik.com/icon/music_17877340#fromView=keyword&page=2&position=26&uuid=2c7277d3-3eaf-433f-aeba-96c78c4a41bf).
+Original [music note image](assets/music_17877340.png) by meaicon, downloaded from [freepik.com](https://www.freepik.com/icon/music_17877340#fromView=keyword&page=2&position=26&uuid=2c7277d3-3eaf-433f-aeba-96c78c4a41bf).
 
 Resized to icon file with ImageMagick:
 ```bash
