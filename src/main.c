@@ -6,8 +6,10 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include "cJSON.h"
 #include "icon_data.h"
+#include "version.h"
 
 #define CONFIG_FILENAME L"config.json"
 #define APP_FOLDER L"MediaKeys"
@@ -17,6 +19,8 @@
 #define ID_TRAY_ICON 1
 #define ID_TRAY_EXIT 1001
 #define ID_TRAY_STARTUP 1002
+#define ID_TRAY_VIEWLOG 1003
+#define ID_TRAY_EDITCONFIG 1004
 #define MAX_BINDINGS 64
 
 typedef enum {
@@ -40,6 +44,7 @@ typedef enum {
 typedef enum { WHEEL_UP, WHEEL_DOWN } WheelDirection;
 
 typedef enum {
+    ACTION_NONE,
     ACTION_VOLUME_UP,
     ACTION_VOLUME_DOWN,
     ACTION_VOLUME_MUTE,
@@ -73,6 +78,8 @@ static HotkeyBinding bindings[MAX_BINDINGS] = {0};
 static int bindingCount = 0;
 static BOOL suppressWinKeyUp = FALSE;
 static HICON appIcon = NULL;
+static WCHAR logFilePath[MAX_PATH] = {0};
+static WCHAR configFilePath[MAX_PATH] = {0};
 
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 static LRESULT CALLBACK KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam);
@@ -97,6 +104,12 @@ static BOOL GetStartupShortcutPath(WCHAR *path, DWORD pathLen);
 static BOOL IsStartupEnabled(void);
 static BOOL EnableStartup(void);
 static BOOL DisableStartup(void);
+static BOOL InitLogFile(void);
+static void LogMessage(const char *format, ...);
+static void ViewLogFile(void);
+static void EditConfigFile(void);
+static BOOL IsFirstRun(void);
+static void MarkFirstRunComplete(void);
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
     MSG msg;
@@ -108,6 +121,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
         freopen("CONOUT$", "w", stdout);
     }
+
+    InitLogFile();
+    LogMessage("MediaKeys %s started", VERSION);
 
     appIcon = LoadIconFromMemory(icon_ico, icon_ico_len);
     if (!appIcon) {
@@ -135,6 +151,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     if (trayMenu) {
         UINT startupFlags = MF_STRING | (IsStartupEnabled() ? MF_CHECKED : MF_UNCHECKED);
         AppendMenuW(trayMenu, startupFlags, ID_TRAY_STARTUP, L"Run at startup");
+        AppendMenuW(trayMenu, MF_STRING, ID_TRAY_EDITCONFIG, L"Edit Config");
+        AppendMenuW(trayMenu, MF_STRING, ID_TRAY_VIEWLOG, L"View Log");
         AppendMenuW(trayMenu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(trayMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
     }
@@ -151,6 +169,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         RemoveTrayIcon();
         DestroyWindow(mainWindow);
         return 1;
+    }
+
+    if (IsFirstRun()) {
+        MessageBoxW(NULL,
+            L"MediaKeys is now running in the background.\n\n"
+            L"Right-click the system tray icon to access options.\n\n"
+            L"(This message will only appear once.)",
+            APP_NAME, MB_OK | MB_ICONINFORMATION);
+        MarkFirstRunComplete();
     }
 
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
@@ -192,12 +219,15 @@ static ModifierState ParseModifierState(const char *str) {
         return MODIFIER_EITHER;
     if (strcmp(str, "both") == 0)
         return MODIFIER_BOTH;
+    LogMessage("Warning: unrecognized modifier '%s', using 'none'", str);
     return MODIFIER_NONE;
 }
 
 static MediaAction ParseAction(const char *str) {
-    if (!str)
-        return ACTION_VOLUME_UP;
+    if (!str) {
+        LogMessage("Warning: missing action");
+        return ACTION_NONE;
+    }
     if (strcmp(str, "volume_up") == 0)
         return ACTION_VOLUME_UP;
     if (strcmp(str, "volume_down") == 0)
@@ -210,12 +240,15 @@ static MediaAction ParseAction(const char *str) {
         return ACTION_PREV_TRACK;
     if (strcmp(str, "next_track") == 0)
         return ACTION_NEXT_TRACK;
-    return ACTION_VOLUME_UP;
+    LogMessage("Warning: unrecognized action '%s'", str);
+    return ACTION_NONE;
 }
 
 static BOOL ParseTrigger(const char *str, TriggerType *type, HotkeyBinding *binding) {
-    if (!str)
+    if (!str) {
+        LogMessage("Warning: missing trigger");
         return FALSE;
+    }
 
     if (strcmp(str, "wheel_up") == 0) {
         *type = TRIGGER_MOUSE_WHEEL;
@@ -255,11 +288,18 @@ static BOOL ParseTrigger(const char *str, TriggerType *type, HotkeyBinding *bind
     }
 
     if (strncmp(str, "key_", 4) == 0) {
+        char *endptr;
+        unsigned long code = strtoul(str + 4, &endptr, 0);
+        if (endptr == str + 4 || *endptr != '\0') {
+            LogMessage("Warning: invalid key code '%s'", str);
+            return FALSE;
+        }
         *type = TRIGGER_KEYBOARD;
-        binding->trigger.keyCode = (DWORD)strtoul(str + 4, NULL, 0);
+        binding->trigger.keyCode = (DWORD)code;
         return TRUE;
     }
 
+    LogMessage("Warning: unrecognized trigger '%s'", str);
     return FALSE;
 }
 
@@ -307,6 +347,7 @@ static BOOL LoadConfig(void) {
     if (!GetConfigPath(configPath, MAX_PATH, &isAppData)) {
         return FALSE;
     }
+    wcscpy_s(configFilePath, MAX_PATH, configPath);
 
     if (GetFileAttributesW(configPath) == INVALID_FILE_ATTRIBUTES) {
         if (!CreateDefaultConfig(configPath)) {
@@ -320,6 +361,10 @@ static BOOL LoadConfig(void) {
 
     fseek(f, 0, SEEK_END);
     long fileSize = ftell(f);
+    if (fileSize < 0) {
+        fclose(f);
+        return FALSE;
+    }
     fseek(f, 0, SEEK_SET);
 
     char *jsonStr = (char *)malloc(fileSize + 1);
@@ -328,9 +373,13 @@ static BOOL LoadConfig(void) {
         return FALSE;
     }
 
-    fread(jsonStr, 1, fileSize, f);
-    jsonStr[fileSize] = '\0';
+    size_t bytesRead = fread(jsonStr, 1, fileSize, f);
     fclose(f);
+    if (bytesRead != (size_t)fileSize) {
+        free(jsonStr);
+        return FALSE;
+    }
+    jsonStr[fileSize] = '\0';
 
     cJSON *root = cJSON_Parse(jsonStr);
     free(jsonStr);
@@ -418,6 +467,8 @@ static void ExecuteAction(MediaAction action) {
     WORD vk = 0;
 
     switch (action) {
+    case ACTION_NONE:
+        return;
     case ACTION_VOLUME_UP:
         vk = VK_VOLUME_UP;
         break;
@@ -440,8 +491,13 @@ static void ExecuteAction(MediaAction action) {
         return;
     }
 
-    keybd_event((BYTE)vk, 0, 0, 0);
-    keybd_event((BYTE)vk, 0, KEYEVENTF_KEYUP, 0);
+    INPUT inputs[2] = {0};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = vk;
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = vk;
+    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, inputs, sizeof(INPUT));
 }
 
 static BOOL IsModifierKey(DWORD vkCode) {
@@ -557,18 +613,16 @@ static LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
         case WM_XBUTTONUP: {
             WORD xButton = HIWORD(ms->mouseData);
             MouseButton btn = (xButton == XBUTTON1) ? MOUSE_BUTTON_X1 : MOUSE_BUTTON_X2;
-            BOOL hasBinding = FALSE;
             for (int i = 0; i < bindingCount; i++) {
-                if (bindings[i].triggerType == TRIGGER_MOUSE_BUTTON &&
-                    bindings[i].trigger.mouseButton == btn && CheckModifiers(&bindings[i])) {
-                    hasBinding = TRUE;
-                    break;
+                HotkeyBinding *b = &bindings[i];
+                if (b->triggerType == TRIGGER_MOUSE_BUTTON &&
+                    b->trigger.mouseButton == btn && CheckModifiers(b)) {
+                    if (wParam == WM_XBUTTONDOWN) {
+                        MarkWinKeyForSuppression();
+                        ExecuteAction(b->action);
+                    }
+                    return 1;
                 }
-            }
-            if (hasBinding) {
-                if (wParam == WM_XBUTTONDOWN)
-                    ProcessMouseButtonTrigger(btn);
-                return 1;
             }
         } break;
 
@@ -614,6 +668,8 @@ static HICON LoadIconFromMemory(const unsigned char *data, unsigned int size) {
         return NULL;
 
     int offset = data[18] | (data[19] << 8) | (data[20] << 16) | (data[21] << 24);
+    if (offset < 0 || (unsigned int)offset >= size)
+        return NULL;
     int imageSize = size - offset;
 
     return CreateIconFromResourceEx(
@@ -643,7 +699,8 @@ static BOOL EnableStartup(void) {
         return FALSE;
 
     WCHAR exePath[MAX_PATH];
-    if (!GetModuleFileNameW(NULL, exePath, MAX_PATH))
+    DWORD exePathLen = GetModuleFileNameW(NULL, exePath, MAX_PATH);
+    if (exePathLen == 0 || exePathLen >= MAX_PATH)
         return FALSE;
 
     CoInitialize(NULL);
@@ -682,6 +739,84 @@ static BOOL DisableStartup(void) {
     return DeleteFileW(shortcutPath);
 }
 
+static BOOL InitLogFile(void) {
+    WCHAR appDataPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appDataPath)))
+        return FALSE;
+
+    WCHAR dirPath[MAX_PATH];
+    swprintf_s(dirPath, MAX_PATH, L"%s\\%s", appDataPath, APP_FOLDER);
+    CreateDirectoryW(dirPath, NULL);
+
+    swprintf_s(logFilePath, MAX_PATH, L"%s\\%s\\log.txt", appDataPath, APP_FOLDER);
+    return TRUE;
+}
+
+static void LogMessage(const char *format, ...) {
+    if (logFilePath[0] == L'\0')
+        return;
+
+    FILE *f = _wfopen(logFilePath, L"a");
+    if (!f)
+        return;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d] ",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    va_list args;
+    va_start(args, format);
+    vfprintf(f, format, args);
+    va_end(args);
+
+    fprintf(f, "\n");
+    fclose(f);
+}
+
+static void ViewLogFile(void) {
+    if (logFilePath[0] == L'\0')
+        return;
+
+    ShellExecuteW(NULL, L"open", logFilePath, NULL, NULL, SW_SHOWNORMAL);
+}
+
+static void EditConfigFile(void) {
+    if (configFilePath[0] == L'\0')
+        return;
+
+    ShellExecuteW(NULL, L"open", configFilePath, NULL, NULL, SW_SHOWNORMAL);
+}
+
+static BOOL IsFirstRun(void) {
+    WCHAR appDataPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appDataPath)))
+        return FALSE;
+
+    WCHAR markerPath[MAX_PATH];
+    swprintf_s(markerPath, MAX_PATH, L"%s\\%s\\.firstrun", appDataPath, APP_FOLDER);
+
+    return GetFileAttributesW(markerPath) == INVALID_FILE_ATTRIBUTES;
+}
+
+static void MarkFirstRunComplete(void) {
+    WCHAR appDataPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appDataPath)))
+        return;
+
+    WCHAR dirPath[MAX_PATH];
+    swprintf_s(dirPath, MAX_PATH, L"%s\\%s", appDataPath, APP_FOLDER);
+    CreateDirectoryW(dirPath, NULL);
+
+    WCHAR markerPath[MAX_PATH];
+    swprintf_s(markerPath, MAX_PATH, L"%s\\%s\\.firstrun", appDataPath, APP_FOLDER);
+
+    HANDLE hFile = CreateFileW(markerPath, GENERIC_WRITE, 0, NULL, CREATE_NEW,
+                               FILE_ATTRIBUTE_HIDDEN, NULL);
+    if (hFile != INVALID_HANDLE_VALUE)
+        CloseHandle(hFile);
+}
+
 static BOOL RegisterWindowClass(HINSTANCE hInstance) {
     WNDCLASSEXW wc = {0};
 
@@ -707,7 +842,8 @@ static BOOL InitTrayIcon(HWND hwnd) {
     notifyIconData.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     notifyIconData.uCallbackMessage = WM_TRAYICON;
     notifyIconData.hIcon = appIcon;
-    wcscpy_s(notifyIconData.szTip, sizeof(notifyIconData.szTip) / sizeof(WCHAR), APP_NAME);
+    swprintf_s(notifyIconData.szTip, sizeof(notifyIconData.szTip) / sizeof(WCHAR),
+               L"%s v%S", APP_NAME, VERSION);
 
     return Shell_NotifyIconW(NIM_ADD, &notifyIconData);
 }
@@ -717,8 +853,10 @@ static void RemoveTrayIcon(void) {
 }
 
 static void ShowTrayMenu(HWND hwnd) {
-    POINT pt;
+    if (!trayMenu)
+        return;
 
+    POINT pt;
     GetCursorPos(&pt);
     SetForegroundWindow(hwnd);
 
@@ -750,6 +888,12 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 EnableStartup();
                 CheckMenuItem(trayMenu, ID_TRAY_STARTUP, MF_CHECKED);
             }
+            return 0;
+        case ID_TRAY_EDITCONFIG:
+            EditConfigFile();
+            return 0;
+        case ID_TRAY_VIEWLOG:
+            ViewLogFile();
             return 0;
         case ID_TRAY_EXIT:
             PostQuitMessage(0);

@@ -66,7 +66,7 @@ Section "Uninstall"
 
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MediaKeys"
 
-    MessageBox MB_YESNO "Do you want to delete your configuration file?" IDNO SkipConfigDelete
+    MessageBox MB_YESNO "Do you want to delete your configuration and log files?" IDNO SkipConfigDelete
         RMDir /r "$APPDATA\MediaKeys"
     SkipConfigDelete:
 SectionEnd
