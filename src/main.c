@@ -80,6 +80,7 @@ static BOOL suppressWinKeyUp = FALSE;
 static HICON appIcon = NULL;
 static WCHAR logFilePath[MAX_PATH] = {0};
 static WCHAR configFilePath[MAX_PATH] = {0};
+static WCHAR dataDir[MAX_PATH] = {0};
 
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 static LRESULT CALLBACK KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam);
@@ -93,8 +94,9 @@ static BOOL InstallHooks(void);
 static void RemoveHooks(void);
 static BOOL CheckModifiers(const HotkeyBinding *binding);
 static void ExecuteAction(MediaAction action);
+static BOOL InitDataDir(void);
 static BOOL LoadConfig(void);
-static BOOL GetConfigPath(WCHAR *path, DWORD pathLen, BOOL *isAppData);
+static BOOL GetConfigPath(WCHAR *path, DWORD pathLen);
 static BOOL CreateDefaultConfig(const WCHAR *path);
 static ModifierState ParseModifierState(const char *str);
 static BOOL ParseTrigger(const char *str, TriggerType *type, HotkeyBinding *binding);
@@ -118,10 +120,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     (void)lpCmdLine;
     (void)nCmdShow;
 
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-        freopen("CONOUT$", "w", stdout);
-    }
-
+    InitDataDir();
     InitLogFile();
     LogMessage("MediaKeys %s started", VERSION);
 
@@ -303,11 +302,19 @@ static BOOL ParseTrigger(const char *str, TriggerType *type, HotkeyBinding *bind
     return FALSE;
 }
 
-static BOOL GetConfigPath(WCHAR *path, DWORD pathLen, BOOL *isAppData) {
-    if (GetFileAttributesW(CONFIG_FILENAME) != INVALID_FILE_ATTRIBUTES) {
-        wcscpy_s(path, pathLen, CONFIG_FILENAME);
-        *isAppData = FALSE;
-        return TRUE;
+static BOOL InitDataDir(void) {
+    WCHAR exePath[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exePath, MAX_PATH) > 0) {
+        WCHAR *lastSlash = wcsrchr(exePath, L'\\');
+        if (lastSlash) {
+            *lastSlash = L'\0';
+            WCHAR localConfig[MAX_PATH];
+            swprintf_s(localConfig, MAX_PATH, L"%s\\%s", exePath, CONFIG_FILENAME);
+            if (GetFileAttributesW(localConfig) != INVALID_FILE_ATTRIBUTES) {
+                wcscpy_s(dataDir, MAX_PATH, exePath);
+                return TRUE;
+            }
+        }
     }
 
     WCHAR appDataPath[MAX_PATH];
@@ -315,9 +322,13 @@ static BOOL GetConfigPath(WCHAR *path, DWORD pathLen, BOOL *isAppData) {
         return FALSE;
     }
 
-    swprintf_s(path, pathLen, L"%s\\%s\\%s", appDataPath, APP_FOLDER, CONFIG_FILENAME);
-    *isAppData = TRUE;
+    swprintf_s(dataDir, MAX_PATH, L"%s\\%s", appDataPath, APP_FOLDER);
+    CreateDirectoryW(dataDir, NULL);
+    return TRUE;
+}
 
+static BOOL GetConfigPath(WCHAR *path, DWORD pathLen) {
+    swprintf_s(path, pathLen, L"%s\\%s", dataDir, CONFIG_FILENAME);
     return TRUE;
 }
 
@@ -342,9 +353,8 @@ static BOOL CreateDefaultConfig(const WCHAR *path) {
 
 static BOOL LoadConfig(void) {
     WCHAR configPath[MAX_PATH];
-    BOOL isAppData;
 
-    if (!GetConfigPath(configPath, MAX_PATH, &isAppData)) {
+    if (!GetConfigPath(configPath, MAX_PATH)) {
         return FALSE;
     }
     wcscpy_s(configFilePath, MAX_PATH, configPath);
@@ -740,15 +750,10 @@ static BOOL DisableStartup(void) {
 }
 
 static BOOL InitLogFile(void) {
-    WCHAR appDataPath[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appDataPath)))
+    if (dataDir[0] == L'\0')
         return FALSE;
 
-    WCHAR dirPath[MAX_PATH];
-    swprintf_s(dirPath, MAX_PATH, L"%s\\%s", appDataPath, APP_FOLDER);
-    CreateDirectoryW(dirPath, NULL);
-
-    swprintf_s(logFilePath, MAX_PATH, L"%s\\%s\\log.txt", appDataPath, APP_FOLDER);
+    swprintf_s(logFilePath, MAX_PATH, L"%s\\log.txt", dataDir);
     return TRUE;
 }
 
@@ -789,27 +794,21 @@ static void EditConfigFile(void) {
 }
 
 static BOOL IsFirstRun(void) {
-    WCHAR appDataPath[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appDataPath)))
+    if (dataDir[0] == L'\0')
         return FALSE;
 
     WCHAR markerPath[MAX_PATH];
-    swprintf_s(markerPath, MAX_PATH, L"%s\\%s\\.firstrun", appDataPath, APP_FOLDER);
+    swprintf_s(markerPath, MAX_PATH, L"%s\\.firstrun", dataDir);
 
     return GetFileAttributesW(markerPath) == INVALID_FILE_ATTRIBUTES;
 }
 
 static void MarkFirstRunComplete(void) {
-    WCHAR appDataPath[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appDataPath)))
+    if (dataDir[0] == L'\0')
         return;
 
-    WCHAR dirPath[MAX_PATH];
-    swprintf_s(dirPath, MAX_PATH, L"%s\\%s", appDataPath, APP_FOLDER);
-    CreateDirectoryW(dirPath, NULL);
-
     WCHAR markerPath[MAX_PATH];
-    swprintf_s(markerPath, MAX_PATH, L"%s\\%s\\.firstrun", appDataPath, APP_FOLDER);
+    swprintf_s(markerPath, MAX_PATH, L"%s\\.firstrun", dataDir);
 
     HANDLE hFile = CreateFileW(markerPath, GENERIC_WRITE, 0, NULL, CREATE_NEW,
                                FILE_ATTRIBUTE_HIDDEN, NULL);

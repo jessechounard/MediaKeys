@@ -47,10 +47,32 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart("v")
           Compress-Archive -Path "zig-out/bin/MediaKeys.exe", "assets/config.json" -DestinationPath "MediaKeys-${version}-Portable.zip"
 
+      - name: Generate Scoop manifest
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart("v")
+          $zipFile = "MediaKeys-${version}-Portable.zip"
+          $hash = (Get-FileHash $zipFile -Algorithm SHA256).Hash.ToLower()
+          $url = "https://github.com/jessechounard/MediaKeys/releases/download/${tag}/${zipFile}"
+
+          $manifest = @{
+            version = $tag
+            description = "A lightweight Windows utility for configurable media hotkeys"
+            homepage = "https://github.com/jessechounard/MediaKeys"
+            license = "MIT"
+            url = $url
+            hash = "sha256:${hash}"
+            bin = "MediaKeys.exe"
+          }
+
+          $manifest | ConvertTo-Json | Set-Content "MediaKeys.scoop.json"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             MediaKeys-*-Setup.exe
             MediaKeys-*-Portable.zip
+            MediaKeys.scoop.json
           generate_release_notes: true
