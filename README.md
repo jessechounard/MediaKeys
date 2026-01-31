@@ -28,6 +28,11 @@ You have a few options.
 - You can build from the source code (see below)
 - Use a setup installer from the [latest releases](https://github.com/jessechounard/MediaKeys/releases/latest)
 - Grab a portable build from the [latest releases](https://github.com/jessechounard/MediaKeys/releases/latest) - Just unzip and run. To uninstall, make sure the program isn't running (see System Tray below) and delete the file.
+- Install with scoop:
+  ```
+  scoop install https://github.com/jessechounard/MediaKeys/releases/latest/download/MediaKeys.json
+  ```
+  Then run with `MediaKeys` (or `start MediaKeys` if using Git Bash). To have it start automatically with Windows, right-click the system tray icon and enable "Run at startup".
 
 When the app starts, it'll look like nothing happened. Check the system tray for the icon. I should probably add a popup the first time you run it to let you know that the app runs invisibly.
 
