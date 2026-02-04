@@ -81,6 +81,7 @@ static HICON appIcon = NULL;
 static WCHAR logFilePath[MAX_PATH] = {0};
 static WCHAR configFilePath[MAX_PATH] = {0};
 static WCHAR dataDir[MAX_PATH] = {0};
+static UINT WM_TASKBARCREATED = 0;
 
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 static LRESULT CALLBACK KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam);
@@ -139,6 +140,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         MessageBoxW(NULL, L"Failed to create window", APP_NAME, MB_ICONERROR);
         return 1;
     }
+
+    WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");
 
     if (!InitTrayIcon(mainWindow)) {
         MessageBoxW(NULL, L"Failed to create tray icon", APP_NAME, MB_ICONERROR);
@@ -831,7 +834,7 @@ static BOOL RegisterWindowClass(HINSTANCE hInstance) {
 
 static HWND CreateMessageWindow(HINSTANCE hInstance) {
     return CreateWindowExW(
-        0, L"MediaKeysClass", APP_NAME, 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
+        WS_EX_TOOLWINDOW, L"MediaKeysClass", APP_NAME, 0, 0, 0, 0, 0, NULL, NULL, hInstance, NULL);
 }
 
 static BOOL InitTrayIcon(HWND hwnd) {
@@ -902,6 +905,12 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
     case WM_DESTROY:
         PostQuitMessage(0);
+        return 0;
+    }
+
+    if (msg == WM_TASKBARCREATED && WM_TASKBARCREATED != 0) {
+        Shell_NotifyIconW(NIM_ADD, &notifyIconData);
+        LogMessage("Explorer restarted, re-added tray icon");
         return 0;
     }
 
