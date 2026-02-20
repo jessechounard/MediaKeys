@@ -11,6 +11,9 @@
 #include "icon_data.h"
 #include "version.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
 #define CONFIG_FILENAME L"config.json"
 #define APP_FOLDER L"MediaKeys"
 
@@ -22,6 +25,8 @@
 #define ID_TRAY_VIEWLOG 1003
 #define ID_TRAY_EDITCONFIG 1004
 #define MAX_BINDINGS 64
+#define ID_TIMER_CONFIG_RELOAD 1
+#define CONFIG_RELOAD_DELAY_MS 200
 
 typedef enum {
     MODIFIER_NONE,
@@ -50,7 +55,10 @@ typedef enum {
     ACTION_VOLUME_MUTE,
     ACTION_PLAY_PAUSE,
     ACTION_PREV_TRACK,
-    ACTION_NEXT_TRACK
+    ACTION_NEXT_TRACK,
+    ACTION_SCREENSHOT_CLIENT_CLIPBOARD,
+    ACTION_SCREENSHOT_CLIENT_FILE,
+    ACTION_SCREENSHOT_CLIENT_FILE_CLIPBOARD
 } MediaAction;
 
 typedef struct {
@@ -113,6 +121,11 @@ static void ViewLogFile(void);
 static void EditConfigFile(void);
 static BOOL IsFirstRun(void);
 static void MarkFirstRunComplete(void);
+static HBITMAP CaptureClientArea(int *outWidth, int *outHeight);
+static void CaptureClientAreaToClipboard(void);
+static BOOL CaptureClientAreaToFile(WCHAR *outPath, DWORD outPathLen);
+static void CaptureClientAreaToFileClipboard(void);
+static void CopyFileToClipboard(const WCHAR *filePath);
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
     MSG msg;
@@ -173,6 +186,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         return 1;
     }
 
+    HANDLE configWatch = FindFirstChangeNotificationW(dataDir, FALSE, FILE_NOTIFY_CHANGE_LAST_WRITE);
+    if (configWatch == INVALID_HANDLE_VALUE) {
+        LogMessage("Warning: could not watch config directory for changes");
+    }
+
     if (IsFirstRun()) {
         MessageBoxW(NULL,
             L"MediaKeys is now running in the background.\n\n"
@@ -182,11 +200,30 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
         MarkFirstRunComplete();
     }
 
-    while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+    BOOL running = TRUE;
+    while (running) {
+        DWORD waitCount = (configWatch != INVALID_HANDLE_VALUE) ? 1 : 0;
+        HANDLE *waitHandles = &configWatch;
+        DWORD result = MsgWaitForMultipleObjects(waitCount, waitHandles, FALSE, INFINITE, QS_ALLINPUT);
+
+        if (result == WAIT_OBJECT_0 && configWatch != INVALID_HANDLE_VALUE) {
+            SetTimer(mainWindow, ID_TIMER_CONFIG_RELOAD, CONFIG_RELOAD_DELAY_MS, NULL);
+            FindNextChangeNotification(configWatch);
+        } else {
+            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+                if (msg.message == WM_QUIT) {
+                    running = FALSE;
+                    break;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
     }
 
+    if (configWatch != INVALID_HANDLE_VALUE) {
+        FindCloseChangeNotification(configWatch);
+    }
     RemoveHooks();
     RemoveTrayIcon();
     if (trayMenu) {
@@ -206,7 +243,8 @@ static const char *DEFAULT_CONFIG =
     "    { \"win\": \"left\", \"trigger\": \"wheel_down\", \"action\": \"volume_down\" },\n"
     "    { \"win\": \"left\", \"trigger\": \"mouse_x2\", \"action\": \"next_track\" },\n"
     "    { \"win\": \"left\", \"trigger\": \"mouse_x1\", \"action\": \"prev_track\" },\n"
-    "    { \"win\": \"left\", \"trigger\": \"mouse_middle\", \"action\": \"play_pause\" }\n"
+    "    { \"win\": \"left\", \"trigger\": \"mouse_middle\", \"action\": \"play_pause\" },\n"
+    "    { \"win\": \"left\", \"shift\": \"left\", \"trigger\": \"key_printscreen\", \"action\": \"screenshot_client_clipboard\" }\n"
     "  ]\n"
     "}\n";
 
@@ -242,6 +280,12 @@ static MediaAction ParseAction(const char *str) {
         return ACTION_PREV_TRACK;
     if (strcmp(str, "next_track") == 0)
         return ACTION_NEXT_TRACK;
+    if (strcmp(str, "screenshot_client_clipboard") == 0)
+        return ACTION_SCREENSHOT_CLIENT_CLIPBOARD;
+    if (strcmp(str, "screenshot_client_file") == 0)
+        return ACTION_SCREENSHOT_CLIENT_FILE;
+    if (strcmp(str, "screenshot_client_file_clipboard") == 0)
+        return ACTION_SCREENSHOT_CLIENT_FILE_CLIPBOARD;
     LogMessage("Warning: unrecognized action '%s'", str);
     return ACTION_NONE;
 }
@@ -290,9 +334,57 @@ static BOOL ParseTrigger(const char *str, TriggerType *type, HotkeyBinding *bind
     }
 
     if (strncmp(str, "key_", 4) == 0) {
+        static const struct { const char *name; DWORD vk; } namedKeys[] = {
+            /* Letters */
+            {"a", 0x41}, {"b", 0x42}, {"c", 0x43}, {"d", 0x44},
+            {"e", 0x45}, {"f", 0x46}, {"g", 0x47}, {"h", 0x48},
+            {"i", 0x49}, {"j", 0x4A}, {"k", 0x4B}, {"l", 0x4C},
+            {"m", 0x4D}, {"n", 0x4E}, {"o", 0x4F}, {"p", 0x50},
+            {"q", 0x51}, {"r", 0x52}, {"s", 0x53}, {"t", 0x54},
+            {"u", 0x55}, {"v", 0x56}, {"w", 0x57}, {"x", 0x58},
+            {"y", 0x59}, {"z", 0x5A},
+            /* Digits */
+            {"0", 0x30}, {"1", 0x31}, {"2", 0x32}, {"3", 0x33},
+            {"4", 0x34}, {"5", 0x35}, {"6", 0x36}, {"7", 0x37},
+            {"8", 0x38}, {"9", 0x39},
+            /* Function keys */
+            {"f1", VK_F1}, {"f2", VK_F2}, {"f3", VK_F3}, {"f4", VK_F4},
+            {"f5", VK_F5}, {"f6", VK_F6}, {"f7", VK_F7}, {"f8", VK_F8},
+            {"f9", VK_F9}, {"f10", VK_F10}, {"f11", VK_F11}, {"f12", VK_F12},
+            /* Common keys */
+            {"space", VK_SPACE}, {"enter", VK_RETURN}, {"tab", VK_TAB},
+            {"escape", VK_ESCAPE}, {"backspace", VK_BACK}, {"delete", VK_DELETE},
+            {"insert", VK_INSERT}, {"home", VK_HOME}, {"end", VK_END},
+            {"pageup", VK_PRIOR}, {"pagedown", VK_NEXT},
+            {"up", VK_UP}, {"down", VK_DOWN}, {"left", VK_LEFT}, {"right", VK_RIGHT},
+            {"printscreen", VK_SNAPSHOT}, {"scrolllock", VK_SCROLL}, {"pause", VK_PAUSE},
+            {"numlock", VK_NUMLOCK}, {"capslock", VK_CAPITAL},
+            /* Numpad */
+            {"num0", VK_NUMPAD0}, {"num1", VK_NUMPAD1}, {"num2", VK_NUMPAD2},
+            {"num3", VK_NUMPAD3}, {"num4", VK_NUMPAD4}, {"num5", VK_NUMPAD5},
+            {"num6", VK_NUMPAD6}, {"num7", VK_NUMPAD7}, {"num8", VK_NUMPAD8},
+            {"num9", VK_NUMPAD9}, {"nummultiply", VK_MULTIPLY}, {"numadd", VK_ADD},
+            {"numsubtract", VK_SUBTRACT}, {"numdecimal", VK_DECIMAL}, {"numdivide", VK_DIVIDE},
+            /* Punctuation */
+            {"semicolon", VK_OEM_1}, {"equals", VK_OEM_PLUS}, {"comma", VK_OEM_COMMA},
+            {"minus", VK_OEM_MINUS}, {"period", VK_OEM_PERIOD}, {"slash", VK_OEM_2},
+            {"backtick", VK_OEM_3}, {"lbracket", VK_OEM_4}, {"backslash", VK_OEM_5},
+            {"rbracket", VK_OEM_6}, {"quote", VK_OEM_7},
+        };
+
+        const char *keyName = str + 4;
+
+        for (int i = 0; i < (int)(sizeof(namedKeys) / sizeof(namedKeys[0])); i++) {
+            if (strcmp(keyName, namedKeys[i].name) == 0) {
+                *type = TRIGGER_KEYBOARD;
+                binding->trigger.keyCode = namedKeys[i].vk;
+                return TRUE;
+            }
+        }
+
         char *endptr;
-        unsigned long code = strtoul(str + 4, &endptr, 0);
-        if (endptr == str + 4 || *endptr != '\0') {
+        unsigned long code = strtoul(keyName, &endptr, 0);
+        if (endptr == keyName || *endptr != '\0') {
             LogMessage("Warning: invalid key code '%s'", str);
             return FALSE;
         }
@@ -500,6 +592,15 @@ static void ExecuteAction(MediaAction action) {
     case ACTION_NEXT_TRACK:
         vk = VK_MEDIA_NEXT_TRACK;
         break;
+    case ACTION_SCREENSHOT_CLIENT_CLIPBOARD:
+        CaptureClientAreaToClipboard();
+        return;
+    case ACTION_SCREENSHOT_CLIENT_FILE:
+        CaptureClientAreaToFile(NULL, 0);
+        return;
+    case ACTION_SCREENSHOT_CLIENT_FILE_CLIPBOARD:
+        CaptureClientAreaToFileClipboard();
+        return;
     default:
         return;
     }
@@ -511,6 +612,214 @@ static void ExecuteAction(MediaAction action) {
     inputs[1].ki.wVk = vk;
     inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(2, inputs, sizeof(INPUT));
+}
+
+static HBITMAP CaptureClientArea(int *outWidth, int *outHeight) {
+    HWND hwnd = GetForegroundWindow();
+    if (!hwnd) {
+        LogMessage("Screenshot: no foreground window");
+        return NULL;
+    }
+
+    RECT windowRect;
+    if (!GetWindowRect(hwnd, &windowRect)) {
+        LogMessage("Screenshot: GetWindowRect failed");
+        return NULL;
+    }
+
+    int winWidth = windowRect.right - windowRect.left;
+    int winHeight = windowRect.bottom - windowRect.top;
+    if (winWidth <= 0 || winHeight <= 0) {
+        LogMessage("Screenshot: invalid window rect (%dx%d)", winWidth, winHeight);
+        return NULL;
+    }
+
+    POINT clientOrigin = {0, 0};
+    ClientToScreen(hwnd, &clientOrigin);
+    int clientOffsetX = clientOrigin.x - windowRect.left;
+    int clientOffsetY = clientOrigin.y - windowRect.top;
+
+    RECT clientRect;
+    if (!GetClientRect(hwnd, &clientRect)) {
+        LogMessage("Screenshot: GetClientRect failed");
+        return NULL;
+    }
+
+    int clientWidth = clientRect.right - clientRect.left;
+    int clientHeight = clientRect.bottom - clientRect.top;
+    if (clientWidth <= 0 || clientHeight <= 0) {
+        LogMessage("Screenshot: invalid client rect (%dx%d)", clientWidth, clientHeight);
+        return NULL;
+    }
+
+    HDC screenDC = GetDC(NULL);
+    if (!screenDC) {
+        LogMessage("Screenshot: GetDC failed");
+        return NULL;
+    }
+
+    HDC fullDC = CreateCompatibleDC(screenDC);
+    HDC clientDC = CreateCompatibleDC(screenDC);
+    HBITMAP fullBitmap = CreateCompatibleBitmap(screenDC, winWidth, winHeight);
+    HBITMAP clientBitmap = CreateCompatibleBitmap(screenDC, clientWidth, clientHeight);
+    ReleaseDC(NULL, screenDC);
+
+    if (!fullDC || !clientDC || !fullBitmap || !clientBitmap) {
+        LogMessage("Screenshot: failed to allocate GDI resources");
+        if (clientBitmap) DeleteObject(clientBitmap);
+        if (fullBitmap) DeleteObject(fullBitmap);
+        if (clientDC) DeleteDC(clientDC);
+        if (fullDC) DeleteDC(fullDC);
+        return NULL;
+    }
+
+#ifndef PW_RENDERFULLCONTENT
+#define PW_RENDERFULLCONTENT 0x00000002
+#endif
+
+    HBITMAP oldFull = (HBITMAP)SelectObject(fullDC, fullBitmap);
+    if (!PrintWindow(hwnd, fullDC, PW_RENDERFULLCONTENT)) {
+        LogMessage("Screenshot: PrintWindow failed");
+        SelectObject(fullDC, oldFull);
+        DeleteObject(clientBitmap);
+        DeleteObject(fullBitmap);
+        DeleteDC(clientDC);
+        DeleteDC(fullDC);
+        return NULL;
+    }
+
+    HBITMAP oldClient = (HBITMAP)SelectObject(clientDC, clientBitmap);
+    BitBlt(clientDC, 0, 0, clientWidth, clientHeight, fullDC, clientOffsetX, clientOffsetY, SRCCOPY);
+
+    SelectObject(clientDC, oldClient);
+    SelectObject(fullDC, oldFull);
+    DeleteObject(fullBitmap);
+    DeleteDC(clientDC);
+    DeleteDC(fullDC);
+
+    *outWidth = clientWidth;
+    *outHeight = clientHeight;
+    return clientBitmap;
+}
+
+static void CaptureClientAreaToClipboard(void) {
+    int width, height;
+    HBITMAP bitmap = CaptureClientArea(&width, &height);
+    if (!bitmap) return;
+
+    if (OpenClipboard(NULL)) {
+        EmptyClipboard();
+        SetClipboardData(CF_BITMAP, bitmap);
+        CloseClipboard();
+        LogMessage("Screenshot: copied to clipboard (%dx%d)", width, height);
+    } else {
+        DeleteObject(bitmap);
+        LogMessage("Screenshot: OpenClipboard failed");
+    }
+}
+
+static BOOL CaptureClientAreaToFile(WCHAR *outPath, DWORD outPathLen) {
+    int width, height;
+    HBITMAP bitmap = CaptureClientArea(&width, &height);
+    if (!bitmap) return FALSE;
+
+    BITMAPINFOHEADER bi = {0};
+    bi.biSize = sizeof(bi);
+    bi.biWidth = width;
+    bi.biHeight = -height;
+    bi.biPlanes = 1;
+    bi.biBitCount = 32;
+    bi.biCompression = BI_RGB;
+
+    unsigned char *pixels = (unsigned char *)malloc(width * height * 4);
+    if (!pixels) {
+        DeleteObject(bitmap);
+        LogMessage("Screenshot: malloc failed");
+        return FALSE;
+    }
+
+    HDC dc = GetDC(NULL);
+    GetDIBits(dc, bitmap, 0, height, pixels, (BITMAPINFO *)&bi, DIB_RGB_COLORS);
+    ReleaseDC(NULL, dc);
+    DeleteObject(bitmap);
+
+    for (int i = 0; i < width * height; i++) {
+        unsigned char tmp = pixels[i * 4];
+        pixels[i * 4] = pixels[i * 4 + 2];
+        pixels[i * 4 + 2] = tmp;
+    }
+
+    WCHAR picturesPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_MYPICTURES, NULL, 0, picturesPath))) {
+        free(pixels);
+        LogMessage("Screenshot: failed to get Pictures path");
+        return FALSE;
+    }
+
+    WCHAR screenshotsDir[MAX_PATH];
+    swprintf_s(screenshotsDir, MAX_PATH, L"%s\\Screenshots", picturesPath);
+    CreateDirectoryW(screenshotsDir, NULL);
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    WCHAR filePath[MAX_PATH];
+    swprintf_s(filePath, MAX_PATH,
+               L"%s\\Screenshot_%04d%02d%02d_%02d%02d%02d.png",
+               screenshotsDir, st.wYear, st.wMonth, st.wDay,
+               st.wHour, st.wMinute, st.wSecond);
+
+    char filePathA[MAX_PATH];
+    WideCharToMultiByte(CP_UTF8, 0, filePath, -1, filePathA, MAX_PATH, NULL, NULL);
+
+    BOOL success = FALSE;
+    if (stbi_write_png(filePathA, width, height, 4, pixels, width * 4)) {
+        LogMessage("Screenshot: saved to %s", filePathA);
+        if (outPath)
+            wcscpy_s(outPath, outPathLen, filePath);
+        success = TRUE;
+    } else {
+        LogMessage("Screenshot: failed to write PNG");
+    }
+
+    free(pixels);
+    return success;
+}
+
+static void CopyFileToClipboard(const WCHAR *filePath) {
+    DWORD len = (DWORD)(wcslen(filePath) + 1);
+    DWORD dropFilesSize = sizeof(DROPFILES) + (len + 1) * sizeof(WCHAR);
+
+    HGLOBAL hGlobal = GlobalAlloc(GHND, dropFilesSize);
+    if (!hGlobal) {
+        LogMessage("Screenshot: GlobalAlloc failed");
+        return;
+    }
+
+    DROPFILES *df = (DROPFILES *)GlobalLock(hGlobal);
+    df->pFiles = sizeof(DROPFILES);
+    df->fWide = TRUE;
+    WCHAR *fileList = (WCHAR *)((char *)df + sizeof(DROPFILES));
+    wcscpy_s(fileList, len, filePath);
+    fileList[len] = L'\0';
+    GlobalUnlock(hGlobal);
+
+    if (OpenClipboard(NULL)) {
+        EmptyClipboard();
+        SetClipboardData(CF_HDROP, hGlobal);
+        CloseClipboard();
+        LogMessage("Screenshot: file copied to clipboard");
+    } else {
+        GlobalFree(hGlobal);
+        LogMessage("Screenshot: OpenClipboard failed");
+    }
+}
+
+static void CaptureClientAreaToFileClipboard(void) {
+    WCHAR filePath[MAX_PATH];
+    if (CaptureClientAreaToFile(filePath, MAX_PATH)) {
+        CopyFileToClipboard(filePath);
+    }
 }
 
 static BOOL IsModifierKey(DWORD vkCode) {
@@ -899,6 +1208,18 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             return 0;
         case ID_TRAY_EXIT:
             PostQuitMessage(0);
+            return 0;
+        }
+        break;
+
+    case WM_TIMER:
+        if (wParam == ID_TIMER_CONFIG_RELOAD) {
+            KillTimer(hwnd, ID_TIMER_CONFIG_RELOAD);
+            if (LoadConfig()) {
+                LogMessage("Config reloaded (%d bindings)", bindingCount);
+            } else {
+                LogMessage("Warning: config reload failed, keeping previous bindings");
+            }
             return 0;
         }
         break;

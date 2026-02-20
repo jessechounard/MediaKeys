@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("user32");
     exe.linkSystemLibrary("shell32");
     exe.linkSystemLibrary("ole32");
+    exe.linkSystemLibrary("gdi32");
 
     exe.subsystem = .Windows;
     exe.mingw_unicode_entry_point = true;

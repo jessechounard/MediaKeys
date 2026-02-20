@@ -4,6 +4,7 @@
     { "win": "left", "trigger": "wheel_down", "action": "volume_down" },
     { "win": "left", "trigger": "mouse_x2", "action": "next_track" },
     { "win": "left", "trigger": "mouse_x1", "action": "prev_track" },
-    { "win": "left", "trigger": "mouse_middle", "action": "play_pause" }
+    { "win": "left", "trigger": "mouse_middle", "action": "play_pause" },
+    { "win": "left", "shift": "left", "trigger": "key_printscreen", "action": "screenshot_client_clipboard" }
   ]
 }

@@ -95,7 +95,16 @@ Modifier keys: `ctrl`, `shift`, `alt`, `win`
 | `mouse_middle` | Middle mouse button |
 | `mouse_x1` | Mouse back button |
 | `mouse_x2` | Mouse forward button |
+| `key_<name>` | Keyboard key by name (see below) |
 | `key_<code>` | Keyboard key by virtual key code (e.g., `key_0x41` for 'A') |
+
+Named keys: `key_a` through `key_z`, `key_0` through `key_9`, `key_f1` through `key_f12`,
+`key_space`, `key_enter`, `key_tab`, `key_escape`, `key_backspace`, `key_delete`, `key_insert`,
+`key_home`, `key_end`, `key_pageup`, `key_pagedown`, `key_up`, `key_down`, `key_left`, `key_right`,
+`key_printscreen`, `key_scrolllock`, `key_pause`, `key_numlock`, `key_capslock`,
+`key_num0` through `key_num9`, `key_nummultiply`, `key_numadd`, `key_numsubtract`, `key_numdecimal`, `key_numdivide`,
+`key_semicolon`, `key_equals`, `key_comma`, `key_minus`, `key_period`, `key_slash`, `key_backtick`,
+`key_lbracket`, `key_rbracket`, `key_backslash`, `key_quote`
 
 ### Actions
 
@@ -107,6 +116,9 @@ Modifier keys: `ctrl`, `shift`, `alt`, `win`
 | `play_pause` | Play/pause media |
 | `prev_track` | Previous track |
 | `next_track` | Next track |
+| `screenshot_client_clipboard` | Capture active window's client area to clipboard |
+| `screenshot_client_file` | Capture active window's client area to PNG file |
+| `screenshot_client_file_clipboard` | Capture to PNG file and copy the file to clipboard |
 
 ## Attribution
 
