@@ -7,8 +7,10 @@ A lightweight Windows utility for triggering media functions via customizable ho
 - Volume up/down/mute
 - Play/pause
 - Previous/next track
+- Screenshot capture (client area only, no window frame)
 - Customizable modifier key combinations (Ctrl, Shift, Alt, WinKey)
 - Support for keyboard keys, mouse buttons, and mouse wheel
+- Auto-reloads configuration on save
 
 ## Why?
 
@@ -34,7 +36,7 @@ You have a few options.
   ```
   Then run with `MediaKeys` (or `start MediaKeys` if using Git Bash). To have it start automatically with Windows, right-click the system tray icon and enable "Run at startup".
 
-When the app starts, it'll look like nothing happened. Check the system tray for the icon. I should probably add a popup the first time you run it to let you know that the app runs invisibly.
+When the app starts for the first time, a dialog will let you know it's running in the background. Check the system tray for the icon.
 
 If you grab one of the prebuilt binaries, you're likely to see a Windows Defender warning that it's an unrecognized app. This is because it's an unsigned app, for now. I'm looking into options there. You can click "More info" then "Run anyway" to get past that if you're willing to ignore the warning.
 
@@ -46,15 +48,15 @@ zig build -Doptimize=ReleaseSmall
 
 ## System Tray
 
-The app runs without a window. The only controls are through the configuration file and the system tray. Currently there are two system tray options when you click on the icon. (A music note.) 
-- Run at startup (Toggle on and off.)
+The app runs without a window. The only controls are through the configuration file and the system tray. Click on the icon (a music note) for these options:
+- Run at startup (toggle on and off)
+- Edit Config (opens config.json in your default text editor)
+- View Log (opens the log file)
 - Exit
-
-I want to add a user interface to configure the keys in here, but it's not there yet.
 
 ## Configuration
 
-On first run, a `config.json` file is created in `%APPDATA%\MediaKeys\`. You can also place a `config.json` in the same directory as the executable to override.
+On first run, a `config.json` file is created in `%APPDATA%\MediaKeys\`. You can also place a `config.json` in the same directory as the executable to override. The configuration is automatically reloaded when saved.
 
 ### Default Configuration
 
@@ -65,7 +67,8 @@ On first run, a `config.json` file is created in `%APPDATA%\MediaKeys\`. You can
     { "win": "left", "trigger": "wheel_down", "action": "volume_down" },
     { "win": "left", "trigger": "mouse_x2", "action": "next_track" },
     { "win": "left", "trigger": "mouse_x1", "action": "prev_track" },
-    { "win": "left", "trigger": "mouse_middle", "action": "play_pause" }
+    { "win": "left", "trigger": "mouse_middle", "action": "play_pause" },
+    { "win": "left", "shift": "left", "trigger": "key_printscreen", "action": "screenshot_client_clipboard" }
   ]
 }
 ```
@@ -122,8 +125,11 @@ Named keys: `key_a` through `key_z`, `key_0` through `key_9`, `key_f1` through `
 
 ## Attribution
 
-cJSON library - Ultralightweight JSON parser in ANSI C  
+cJSON library - Ultralightweight JSON parser in ANSI C
 Downloaded from [cJSON github](https://github.com/DaveGamble/cJSON).
+
+stb_image_write - Single-header image writing library
+Downloaded from [stb github](https://github.com/nothings/stb).
 
 Original [music note image](assets/music_17877340.png) by meaicon, downloaded from [freepik.com](https://www.freepik.com/icon/music_17877340#fromView=keyword&page=2&position=26&uuid=2c7277d3-3eaf-433f-aeba-96c78c4a41bf).
 
